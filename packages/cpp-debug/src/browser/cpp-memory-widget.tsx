@@ -26,17 +26,88 @@ function isprint(byte: number) {
     return byte >= 32 && byte < 127;
 }
 
+/**
+ * Type to represent big and little endianness.
+ */
+type Endianness = 'le' | 'be';
+function isValidEndianness(val: string): val is Endianness {
+    return val == 'le' || val == 'be';
+}
+
+/**
+ * Iterators to be able to iterate forward and backwards on byte arrays.
+ */
+class ForwardIterator implements Iterator<number> {
+    private nextItem: number = 0;
+
+    constructor(private array: Uint8Array) { }
+
+    next(): IteratorResult<number> {
+        if (this.nextItem < this.array.length) {
+            return {
+                value: this.array[this.nextItem++],
+                done: false,
+            }
+        } else {
+            return {
+                done: true,
+                value: 0,
+            };
+        }
+    }
+
+    [Symbol.iterator](): IterableIterator<number> {
+        return this;
+    }
+}
+
+class ReverseIterator implements Iterator<number> {
+    private nextItem: number;
+
+    constructor(private array: Uint8Array) {
+        this.nextItem = this.array.length - 1;
+    }
+
+    next(): IteratorResult<number> {
+        if (this.nextItem >= 0) {
+            return {
+                value: this.array[this.nextItem--],
+                done: false,
+            }
+        } else {
+            return {
+                done: true,
+                value: 0,
+            };
+        }
+    }
+
+    [Symbol.iterator](): IterableIterator<number> {
+        return this;
+    }
+}
+
 @injectable()
 export class MemoryView extends ReactWidget {
 
     static readonly ID = 'memory.view';
     static readonly LABEL = 'Memory';
-    static readonly BYTES_PER_ROW = 16;
+
+    static readonly BYTES_PER_ROW_FIELD_ID = 't-mv-bytesrow';
+    static readonly BYTES_PER_GROUP_FIELD_ID = 't-mv-bytesgroup';
+    static readonly LITTLE_ENDIAN_BUTTON_ID = "t-mv-little-endian";
+    static readonly BIG_ENDIAN_BUTTON_ID = "t-mv-big-endian";
+    static readonly ENDIANNESS_BUTTONS_NAME = "t-mv-endianness";
 
     protected startAddress: number = 0;
     protected bytes: Uint8Array | undefined = undefined;
     // If bytes is undefined, this string explains why.
-    protected memoryReadError: string = 'No memory address information currently available.';
+    protected memoryReadError: string = 'No memory contents currently available.';
+
+    // Parameters for the rendering of the memory contents.
+    protected bytesPerRow: number = 16;
+    protected bytesPerGroup: number = 1;
+    protected endianness: Endianness = 'le';
 
     @inject(MemoryProvider)
     protected readonly memoryProvider!: MemoryProvider;
@@ -89,22 +160,34 @@ export class MemoryView extends ReactWidget {
         return <div id='t-mv-wrapper'>
             <div className='t-mv-group'>
                 <span className='t-mv-input-group'>
-                    <label className='t-mv-label'>Memory Address</label>
                     <input className='t-mv-input' id='t-mv-search' placeholder='Memory Address' type='text' onKeyUp={this.doRefresh} />
                 </span>
                 <span className='t-mv-input-group'>
                     <label className='t-mv-label'>Bytes Per Row</label>
-                    <select className='t-mv-input' id='t-mv-bytesrow' defaultValue='1'>
-                        <option value='0'>8</option>
-                        <option value='1'>16</option>
-                    </select>
+                    <input className='t-mv-input' id={MemoryView.BYTES_PER_ROW_FIELD_ID} type='text'
+                        style={{ width: '3em' }} onChange={this.onBytesPerRowChange} defaultValue={this.bytesPerRow.toString()} />
                 </span>
                 <span className='t-mv-input-group'>
                     <label className='t-mv-label'>Bytes Per Group</label>
-                    <select className='t-mv-input' id='t-mv-bytesgroup' defaultValue='0'>
-                        <option value='0'>8</option>
-                        <option value='1'>16</option>
+                    <select className='t-mv-input' id={MemoryView.BYTES_PER_GROUP_FIELD_ID}
+                        defaultValue={this.bytesPerGroup.toString()} onChange={this.onBytesPerGroupChange}>
+                        <option value='1'>1</option>
+                        <option value='2'>2</option>
+                        <option value='4'>4</option>
+                        <option value='8'>8</option>
+                        <option value='16'>16</option>
                     </select>
+                </span>
+
+                <span className='t-mv-input-group'>
+                    <input type="radio" id={MemoryView.LITTLE_ENDIAN_BUTTON_ID}
+                        name={MemoryView.ENDIANNESS_BUTTONS_NAME} value="le"
+                        onChange={this.onEndiannessChange} defaultChecked={this.endianness === 'le'} />
+                    <label className='t-mv-label' htmlFor={MemoryView.LITTLE_ENDIAN_BUTTON_ID}>Little Endian</label>
+                    <input type="radio" id={MemoryView.BIG_ENDIAN_BUTTON_ID}
+                        name={MemoryView.ENDIANNESS_BUTTONS_NAME} value='be'
+                        onChange={this.onEndiannessChange} defaultChecked={this.endianness === 'be'} />
+                    <label className='t-mv-label' htmlFor={MemoryView.BIG_ENDIAN_BUTTON_ID}>Big Endian</label>
                 </span>
             </div>
         </div>
@@ -149,23 +232,39 @@ export class MemoryView extends ReactWidget {
         const rows: string[][] = [];
 
         // For each row...
-        for (let offset = 0; offset < bytes.length; offset += MemoryView.BYTES_PER_ROW) {
+        for (let rowOffset = 0; rowOffset < bytes.length; rowOffset += this.bytesPerRow) {
             // Bytes shown in this row.
-            const rowBytes = bytes.subarray(offset, offset + MemoryView.BYTES_PER_ROW);
+            const rowBytes = bytes.subarray(rowOffset, rowOffset + this.bytesPerRow);
 
-            const addressStr = '0x' + (this.startAddress + offset).toString(16);
+            const addressStr = '0x' + (this.startAddress + rowOffset).toString(16);
             let rowBytesStr = '';
             let asciiStr = '';
 
-            // For each byte in the row...
-            for (const byte of rowBytes) {
-                const byteStr = byte.toString(16);
-                if (byteStr.length == 1) {
-                    rowBytesStr += '0';
+            // For each byte group in the row...
+            for (let groupOffset = 0; groupOffset < rowBytes.length; groupOffset += this.bytesPerGroup) {
+                // Bytes shown in this group.
+                const groupBytes = rowBytes.subarray(groupOffset, groupOffset + this.bytesPerGroup);
+
+                let groupStr = '';
+
+                const iteratorType = this.endianness == 'be' ? ForwardIterator : ReverseIterator;
+
+                // For each byte in the group
+                for (const byte of new iteratorType(groupBytes)) {
+                    const byteStr = byte.toString(16);
+                    if (byteStr.length == 1) {
+                        groupStr += '0';
+                    }
+
+                    groupStr += byteStr;
                 }
 
-                rowBytesStr += byteStr + ' ';
-                asciiStr += isprint(byte) ? String.fromCharCode(byte) : '.';
+                rowBytesStr += groupStr + ' ';
+
+                // The ASCII view is always in strictly increasing address order.
+                for (const byte of groupBytes) {
+                    asciiStr += isprint(byte) ? String.fromCharCode(byte) : '.';
+                }
             }
 
             rows.push([addressStr, rowBytesStr, asciiStr])
@@ -205,7 +304,29 @@ export class MemoryView extends ReactWidget {
                 this.bytes = undefined;
                 this.update();
             });
-
     };
 
+    // Callbacks for when the various view parameters change.
+    protected onBytesPerRowChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const value = event.target.value;
+        if (!/^[0-9]*$/.test(value)) {
+            return;
+        }
+
+        this.bytesPerRow = value.length > 0 ? parseInt(value, 10) : 1;
+        this.update();
+    }
+
+    protected onBytesPerGroupChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+        this.bytesPerGroup = parseInt(event.target.value, 10);
+        this.update();
+    }
+
+    protected onEndiannessChange = (event: React.FormEvent<HTMLInputElement>) => {
+        const value = event.currentTarget.value;
+        if (isValidEndianness(value)) {
+            this.endianness = value;
+        }
+        this.update();
+    }
 }
