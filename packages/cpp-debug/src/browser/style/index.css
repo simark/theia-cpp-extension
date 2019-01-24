@@ -120,3 +120,7 @@ table#t-mv-view .t-mv-view-address {
     font-weight: 700;
     text-align: center;
 }
+
+#t-mv-length {
+    width: 4em;
+}

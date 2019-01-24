@@ -93,6 +93,7 @@ export class MemoryView extends ReactWidget {
     static readonly ID = 'memory.view';
     static readonly LABEL = 'Memory';
 
+    static readonly LENGTH_FIELD_ID = 't-mv-length';
     static readonly BYTES_PER_ROW_FIELD_ID = 't-mv-bytesrow';
     static readonly BYTES_PER_GROUP_FIELD_ID = 't-mv-bytesgroup';
     static readonly LITTLE_ENDIAN_BUTTON_ID = "t-mv-little-endian";
@@ -100,6 +101,7 @@ export class MemoryView extends ReactWidget {
     static readonly ENDIANNESS_BUTTONS_NAME = "t-mv-endianness";
 
     protected startAddress: number = 0;
+    protected length: number = 0;
     protected bytes: Uint8Array | undefined = undefined;
     // If bytes is undefined, this string explains why.
     protected memoryReadError: string = 'No memory contents currently available.';
@@ -135,6 +137,10 @@ export class MemoryView extends ReactWidget {
         return document.getElementById('t-mv-search') as HTMLInputElement;
     }
 
+    protected findLengthField(): HTMLInputElement | undefined {
+        return document.getElementById(MemoryView.LENGTH_FIELD_ID) as HTMLInputElement;
+    }
+
     protected focusSearchField(): void {
         const input = this.findSearchField();
         if (input) {
@@ -167,11 +173,19 @@ export class MemoryView extends ReactWidget {
                 <span className='t-mv-input-group'>
                     <input className='t-mv-input' id='t-mv-search' placeholder='Memory Address' type='text' onKeyUp={this.doRefresh} />
                 </span>
+
+                <span className='t-mv-input-group'>
+                    <label className='t-mv-label' htmlFor={MemoryView.LENGTH_FIELD_ID}>Length:</label>
+                    <input className='t-mv-input' id={MemoryView.LENGTH_FIELD_ID} defaultValue='256'
+                        placeholder='Length' type='text' onKeyUp={this.doRefresh} title='Number of bytes to display in total.' />
+                </span>
+
                 <span className='t-mv-input-group'>
                     <label className='t-mv-label'>Bytes Per Row</label>
                     <input className='t-mv-input' id={MemoryView.BYTES_PER_ROW_FIELD_ID} type='text'
                         style={{ width: '3em' }} onChange={this.onBytesPerRowChange} defaultValue={this.bytesPerRow.toString()} />
                 </span>
+
                 <span className='t-mv-input-group'>
                     <label className='t-mv-label'>Bytes Per Group</label>
                     <select className='t-mv-input' id={MemoryView.BYTES_PER_GROUP_FIELD_ID}
@@ -293,13 +307,16 @@ export class MemoryView extends ReactWidget {
             return;
         }
 
-        const field = this.findSearchField();
-        if (field === undefined) {
+        const addrField = this.findSearchField();
+        const lenField = this.findLengthField();
+        if (addrField === undefined || lenField === undefined) {
             return;
         }
 
-        this.startAddress = parseInt(field.value, 16);
-        this.memoryProvider.readMemory(this.startAddress, 128)
+        this.startAddress = parseInt(addrField.value, 16);
+        const length = parseInt(lenField.value);
+
+        this.memoryProvider.readMemory(this.startAddress, length)
             .then(bytes => {
                 this.bytes = bytes;
                 this.update();
