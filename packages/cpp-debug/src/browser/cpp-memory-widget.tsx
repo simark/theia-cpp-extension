@@ -109,6 +109,11 @@ export class MemoryView extends ReactWidget {
     protected bytesPerGroup: number = 1;
     protected endianness: Endianness = 'le';
 
+    // Parameters for the rendering of the memory contents.
+    protected bytesPerRow: number = 16;
+    protected bytesPerGroup: number = 1;
+    protected endianness: Endianness = 'le';
+
     @inject(MemoryProvider)
     protected readonly memoryProvider!: MemoryProvider;
 
